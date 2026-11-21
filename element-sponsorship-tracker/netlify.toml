@@ -9,11 +9,6 @@
 [functions]
   node_bundler = "esbuild"
 
-# Single-page app: send unknown paths to the app (API routes are handled by the function's own path).
-[[redirects]]
-  from = "/*"
-  to = "/index.html"
-  status = 200
 
 [[headers]]
   for = "/*"
