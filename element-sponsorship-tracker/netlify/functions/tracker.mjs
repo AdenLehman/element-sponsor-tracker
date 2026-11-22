@@ -1,5 +1,6 @@
 // The tracker's only server code: reads and saves the shared data in Netlify Blobs.
-// GET  /api/tracker            -> { data }            (anyone with the link can view)
+// GET  /api/tracker            -> { summary }         (no passcode: header numbers only, no names or details)
+// GET  /api/tracker + key      -> { data }            (header x-editor-key = EDITOR_PASSCODE: the full tracker)
 // POST /api/tracker            -> { data }            (editors only: header x-editor-key = EDITOR_PASSCODE)
 //   body { type: "auth" }                      checks the passcode
 //   body { ops: [ {type, collection, id, data} ] }   type = set | update | delete
@@ -48,6 +49,31 @@ function apply(data, op) {
   } else throw new Error('Invalid change');
 }
 
+// The only figures shown before the passcode is entered: totals, never names or details.
+function summarize(data) {
+  const stages = Array.isArray(data.stages) && data.stages.length === 7 ? data.stages : [];
+  const n = (p) => stages.indexOf(p.stage) + 1;
+  const all = Object.values(data.prospects || {}).filter((p) => p && p.brand);
+  const live = all.filter((p) => !p.declined);
+  const closed = live.filter((p) => n(p) === 7);
+  const active = live.filter((p) => n(p) >= 4 && n(p) <= 6);
+  const sum = (rows, f) => rows.reduce((t, r) => t + (Number(r[f]) || 0), 0);
+  const fighters = Object.values(data.fighters || {});
+  return {
+    prospects: all.length,
+    contacted: all.filter((p) => n(p) >= 3 || (Number(p.touches) || 0) > 0).length,
+    closed: closed.length,
+    active: active.length,
+    signed: sum(closed, 'signed_value'),
+    pipeline: sum(active, 'potential_value'),
+    positions: (data.inventory || []).length,
+    inventoryValue: sum(data.inventory || [], 'rate'),
+    fightersTaken: fighters.filter((f) => f.sponsor).length,
+    fightersTotal: fighters.length,
+    updated_at: data.updated_at || 0,
+  };
+}
+
 function sameSecret(a, b) {
   if (typeof a !== 'string' || typeof b !== 'string' || a.length !== b.length) return false;
   let diff = 0;
@@ -58,15 +84,19 @@ function sameSecret(a, b) {
 export default async (req) => {
   const store = getStore({ name: 'element-sponsorship', consistency: 'strong' });
 
+  const passcode = process.env.EDITOR_PASSCODE;
+  const sentKey = req.headers.get('x-editor-key') || '';
+
   if (req.method === 'GET') {
     const { data } = await load(store);
-    return json({ data });
+    if (!sentKey) return json({ summary: summarize(data) });
+    if (passcode && sameSecret(sentKey, passcode)) return json({ data });
+    return json({ error: 'That passcode is not right.' }, 401);
   }
   if (req.method !== 'POST') return json({ error: 'Method not allowed' }, 405);
 
-  const passcode = process.env.EDITOR_PASSCODE;
   if (!passcode) return json({ error: 'Editing is not set up yet: add EDITOR_PASSCODE in Netlify.' }, 503);
-  if (!sameSecret(req.headers.get('x-editor-key') || '', passcode)) return json({ error: 'That passcode is not right.' }, 401);
+  if (!sameSecret(sentKey, passcode)) return json({ error: 'That passcode is not right.' }, 401);
 
   const text = await req.text();
   if (text.length > MAX_BODY) return json({ error: 'Change too large' }, 413);

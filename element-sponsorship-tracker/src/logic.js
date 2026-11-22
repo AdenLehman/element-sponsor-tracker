@@ -53,3 +53,13 @@ export function positionStatus(data) {
   });
   return best;
 }
+
+// Header figures from the full tracker, in the same shape the server sends before sign-in.
+export function headerStats(data, sum) {
+  const fighters = Object.values(data.fighters || {});
+  return {
+    prospects: sum.all.length, contacted: sum.contacted, closed: sum.closed.length, active: sum.active.length,
+    signed: sum.signed, pipeline: sum.pipeline, positions: sum.positions, inventoryValue: sum.inventoryValue,
+    fightersTaken: fighters.filter((f) => f.sponsor).length, fightersTotal: fighters.length,
+  };
+}

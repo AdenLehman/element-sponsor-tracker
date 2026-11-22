@@ -16,9 +16,12 @@ async function readJson(res) {
   return body;
 }
 
-export async function fetchTracker() {
-  const res = await fetch(URL_API, { headers: { accept: 'application/json' }, cache: 'no-store' });
-  return (await readJson(res)).data;
+// With the passcode: { data } (the full tracker). Without it: { summary } (header numbers only).
+export async function fetchTracker(key) {
+  const headers = { accept: 'application/json' };
+  if (key) headers['x-editor-key'] = key;
+  const res = await fetch(URL_API, { headers, cache: 'no-store' });
+  return readJson(res);
 }
 
 export async function checkKey(key) {

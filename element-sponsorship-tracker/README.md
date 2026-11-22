@@ -2,8 +2,8 @@
 
 A live, shared tracker for Element Gym's 2026–27 sponsorship campaign. It's a React app built with Vite and hosted on Netlify. One Netlify Function saves the data in Netlify Blobs, Netlify's built-in storage, so there's no outside database or account to set up.
 
-- **Everyone with the link** sees the tracker read-only. It refreshes every 15 seconds and whenever the tab regains focus.
-- **Editors** sign in with one shared passcode to log touches, edit prospects, assign fighter sponsors, update milestones and post the Friday update.
+- **Without the passcode**, visitors see only the black header: signed revenue, positions secured, prospect count, active conversations, pipeline value and fighter slots. Everything below it is a blurred placeholder with a passcode box. No brand names or details are sent to the browser.
+- **With the passcode** (one shared `EDITOR_PASSCODE`), the full tracker opens and can be edited: log touches, edit prospects, assign fighter sponsors, update milestones and post the Friday update. It refreshes every 15 seconds and is remembered on that device until **Lock · sign out**.
 
 Contact names, emails and negotiation notes are **not** stored here. Keep them in the internal CRM workbook.
 
@@ -20,7 +20,7 @@ You need a free Netlify account and either a GitHub account or the Netlify CLI. 
    - Value: a passphrase only editors will know, for example four random words
    - Scope: Functions
 5. **Deploys → Trigger deploy → Deploy project** so the function picks up the passcode.
-6. Open the site, click **Editor sign-in** and enter the passcode.
+6. Open the site and enter the passcode in the box below the header.
 
 ### Option B — Netlify CLI
 ```bash
@@ -45,7 +45,7 @@ npx netlify dev           # runs the app and the function together at http://loc
 - Each save sends only what changed. If two editors save at the same moment, the function re-reads the latest copy and applies the change again, so nothing is overwritten.
 - Every change shows an **Undo** button for 7 seconds.
 
-**Back up or export:** open `https://YOUR-SITE.netlify.app/api/tracker` to download the whole tracker as JSON.
+**Back up or export:** run `curl -H "x-editor-key: YOUR_PASSCODE" https://YOUR-SITE.netlify.app/api/tracker > backup.json`. Without the passcode, that address returns only the header totals.
 
 **Start over from the starting data:** in Netlify, open **Blobs**, find store `element-sponsorship`, and delete the key `tracker-v1`.
 
@@ -70,13 +70,14 @@ netlify.toml                  build + function settings
 netlify/functions/tracker.mjs the only server code (read + save, passcode check)
 data/seed.js                  starting data
 src/App.jsx                   app state, live refresh, saving, undo
-src/components/               masthead, due today, pipeline, forms, progress, fighters, timeline, Friday update
+src/components/               masthead, locked view, due today, pipeline, forms, progress, fighters, timeline, Friday update
 src/logic.js                  dates, money, stages, follow-up cadence
 src/styles.css                Element brand styles
 ```
 
 ## Security notes
 
-- The passcode is checked on the server, never in the browser. Anyone without it can only read.
-- The tracker URL is unlisted (`noindex`) but not private: anyone with the link can view it. To restrict viewing too, turn on Netlify's site-wide password protection, which needs a paid Netlify plan.
+- The passcode is checked on the server, never in the browser. Without it, the server sends only the header totals, so the blur can't be bypassed from the browser to read the pipeline.
+- Anyone with the passcode can both view and edit. Share it only with people who should do both.
+- The header totals are public to anyone with the link, and the page is unlisted (`noindex`).
 - To change the passcode, update `EDITOR_PASSCODE` and redeploy. Editors then sign in again.

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { applyLocal, fetchTracker, inverseOps, rememberKey, saveOps, savedKey } from './api.js';
-import { CADENCE, addDays, slugId, summarize, today } from './logic.js';
+import { CADENCE, addDays, headerStats, slugId, summarize, today } from './logic.js';
 import { Slash } from './components/Brand.jsx';
 import Masthead from './components/Masthead.jsx';
 import DueToday from './components/DueToday.jsx';
@@ -10,7 +10,7 @@ import Progress from './components/Progress.jsx';
 import Fighters from './components/Fighters.jsx';
 import Timeline from './components/Timeline.jsx';
 import WeeklyUpdate from './components/WeeklyUpdate.jsx';
-import EditorLogin from './components/EditorLogin.jsx';
+import Locked from './components/Locked.jsx';
 
 const EMPTY = { prospects: {}, fighters: {}, updates: {}, milestones: {}, inventory: [], stages: [] };
 const POLL_MS = 15000;
@@ -18,28 +18,42 @@ const asList = (o) => Object.entries(o || {}).map(([id, v]) => ({ id, ...v }));
 
 export default function App() {
   const [data, setData] = useState(EMPTY);
+  const [unlocked, setUnlocked] = useState(false);
+  const [summary, setSummary] = useState(null);
   const [status, setStatus] = useState('loading');
   const [lastSync, setLastSync] = useState(null);
   const [key, setKey] = useState(savedKey);
-  const [login, setLogin] = useState(false);
   const [form, setForm] = useState(null); // { id } for edit, { id: null } for add
   const [toast, setToast] = useState(null);
   const saving = useRef(0);
   const dataRef = useRef(data);
   dataRef.current = data;
+  const keyRef = useRef(key);
+  keyRef.current = key;
+
+  const lock = useCallback((message) => {
+    rememberKey(''); setKey(''); setUnlocked(false); setData(EMPTY);
+    if (message) setToast({ message });
+  }, []);
 
   const refresh = useCallback(async () => {
     if (saving.current) return;
+    const k = keyRef.current;
     try {
-      const d = await fetchTracker();
-      if (!saving.current) { setData(d); setStatus('live'); setLastSync(new Date()); }
-    } catch {
+      const res = await fetchTracker(k);
+      if (saving.current || k !== keyRef.current) return;
+      if (res.data) { setData(res.data); setUnlocked(true); }
+      else { setSummary(res.summary || null); setUnlocked(false); }
+      setStatus('live'); setLastSync(new Date());
+    } catch (e) {
+      if (e.status === 401) { lock('That passcode no longer works. Enter it again to open the tracker.'); return; }
       setStatus((s) => (s === 'live' ? 'live' : 'error'));
     }
-  }, []);
+  }, [lock]);
+
+  useEffect(() => { refresh(); }, [key, refresh]);
 
   useEffect(() => {
-    refresh();
     const tick = setInterval(() => { if (document.visibilityState === 'visible') refresh(); }, POLL_MS);
     const onFocus = () => refresh();
     window.addEventListener('focus', onFocus);
@@ -53,7 +67,7 @@ export default function App() {
   }, [toast]);
 
   const commit = useCallback(async (ops, message, allowUndo = true) => {
-    if (!key) { setLogin(true); return false; }
+    if (!key || !unlocked) return false;
     const before = dataRef.current;
     const undo = allowUndo ? inverseOps(before, ops) : null;
     setData(applyLocal(before, ops));
@@ -65,19 +79,20 @@ export default function App() {
       return true;
     } catch (e) {
       setData(before);
-      if (e.status === 401) { rememberKey(''); setKey(''); setToast({ message: 'That passcode no longer works. Sign in again to keep editing.' }); }
+      if (e.status === 401) lock('That passcode no longer works. Enter it again to open the tracker.');
       else setToast({ message: e.message || 'Couldn’t save just now. Try again in a moment.' });
       return false;
     } finally {
       saving.current -= 1;
     }
-  }, [key]);
+  }, [key, unlocked, lock]);
 
   const sum = useMemo(() => summarize(data), [data]);
+  const stats = unlocked ? headerStats(data, sum) : summary;
   const fighters = useMemo(() => asList(data.fighters), [data.fighters]);
   const updates = useMemo(() => asList(data.updates), [data.updates]);
   const milestones = useMemo(() => asList(data.milestones), [data.milestones]);
-  const editor = !!key;
+  const editor = unlocked;
 
   const logTouch = (id) => {
     const p = data.prospects[id]; if (!p) return;
@@ -93,8 +108,11 @@ export default function App() {
 
   return (
     <>
-      <Masthead sum={sum} fighters={fighters} status={status} lastSync={lastSync} editor={editor}
-        onEditor={() => { if (editor) { rememberKey(''); setKey(''); setToast({ message: 'Signed out. The tracker is read-only on this device.' }); } else setLogin(true); }} />
+      <Masthead stats={stats} status={status} lastSync={lastSync} editor={editor}
+        onEditor={() => { if (editor) lock('Locked. Enter the passcode to open the tracker again.'); else document.querySelector('.lock-card input')?.focus(); }} />
+      {!unlocked ? (
+        <main><Locked onUnlock={(k) => { rememberKey(k); setKey(k); setToast({ message: 'Unlocked. You can view and edit the tracker on this device.' }); }} /></main>
+      ) : (
       <main>
         <DueToday sum={sum} editor={editor} onTouch={logTouch} onEdit={(id) => setForm({ id })} />
         <Pipeline sum={sum} inventory={data.inventory || []} editor={editor} onTouch={logTouch} onEdit={(id) => setForm({ id })} onAdd={() => setForm({ id: null })} />
@@ -107,6 +125,7 @@ export default function App() {
           onAdd={(d) => commit([{ type: 'set', collection: 'updates', id: slugId('u-' + d.week_ending), data: d }], 'Added to the update')}
           onRemove={(id) => commit([{ type: 'delete', collection: 'updates', id }], 'Item removed')} />
       </main>
+      )}
       <footer className="foot-band band">
         <span className="cap">Keg House Commons · West 7th, St. Paul</span>
         <span className="cap">Aden Lehman · Sponsorships and Creative · design.lehman@gmail.com</span>
@@ -121,7 +140,6 @@ export default function App() {
             if (await commit([{ type: 'set', collection: 'prospects', id, data: d }], form.id ? `Saved ${d.brand}` : `Added ${d.brand}`)) setForm(null);
           }} />
       )}
-      {login && <EditorLogin onClose={() => setLogin(false)} onDone={(k) => { rememberKey(k); setKey(k); setLogin(false); setToast({ message: 'Signed in. You can edit the tracker on this device.' }); }} />}
       {toast && (
         <div className="toast" role="status">
           <span>{toast.message}</span>
